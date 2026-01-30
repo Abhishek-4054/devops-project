@@ -1,27 +1,37 @@
 pipeline {
     agent any
-    
+
     environment {
+        // DockerHub
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
-        DOCKERHUB_USERNAME = 'abhishekc4054'  // ← Change this
-        BACKEND_IMAGE = "${DOCKERHUB_USERNAME}/backend"
+        DOCKERHUB_USERNAME    = 'abhishekc4054'
+
+        // Images
+        BACKEND_IMAGE  = "${DOCKERHUB_USERNAME}/backend"
         FRONTEND_IMAGE = "${DOCKERHUB_USERNAME}/frontend"
+
+        // VM Details
         VM_USER = 'akshu001'
-        VM_IP = '192.168.0.9'  // Updated IP
-        SSH_OPTS = '-o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL'
+        VM_IP   = '192.168.0.9'
     }
-    
+
+    options {
+        timestamps()
+        timeout(time: 15, unit: 'MINUTES')
+    }
+
     stages {
+
         stage('📥 Checkout Code') {
             steps {
-                echo '🔄 Pulling code from GitHub...'
+                echo 'Cloning GitHub repository...'
                 checkout scm
             }
         }
-        
-        stage('🏗️ Build Backend') {
+
+        stage('🏗️ Build Backend Image') {
             steps {
-                echo '🐳 Building Backend Docker Image...'
+                echo 'Building backend Docker image...'
                 dir('backend') {
                     bat """
                         docker build -t ${BACKEND_IMAGE}:${BUILD_NUMBER} .
@@ -30,10 +40,10 @@ pipeline {
                 }
             }
         }
-        
-        stage('🏗️ Build Frontend') {
+
+        stage('🏗️ Build Frontend Image') {
             steps {
-                echo '🐳 Building Frontend Docker Image...'
+                echo 'Building frontend Docker image...'
                 dir('frontend') {
                     bat """
                         docker build -t ${FRONTEND_IMAGE}:${BUILD_NUMBER} .
@@ -42,63 +52,81 @@ pipeline {
                 }
             }
         }
-        
-        stage('📤 Push to DockerHub') {
+
+        stage('📤 Push Images to DockerHub') {
             steps {
-                echo '⬆️ Pushing to DockerHub...'
+                echo 'Pushing Docker images to DockerHub...'
                 bat """
                     echo %DOCKERHUB_CREDENTIALS_PSW% | docker login -u %DOCKERHUB_CREDENTIALS_USR% --password-stdin
+
                     docker push ${BACKEND_IMAGE}:${BUILD_NUMBER}
                     docker push ${BACKEND_IMAGE}:latest
+
                     docker push ${FRONTEND_IMAGE}:${BUILD_NUMBER}
                     docker push ${FRONTEND_IMAGE}:latest
+
                     docker logout
                 """
             }
         }
-        
-        stage('📋 Copy K8s Files') {
+
+        stage('📋 Copy K8s Manifests to VM') {
             steps {
-                echo '📂 Copying K8s manifests to VM...'
-                bat """
-                    scp ${SSH_OPTS} -r k8s ${VM_USER}@${VM_IP}:/home/${VM_USER}/
-                """
+                echo 'Copying Kubernetes manifests to VM...'
+                sshagent(['vm-ssh-key']) {
+                    bat """
+                        scp -o StrictHostKeyChecking=no -r k8s ${VM_USER}@${VM_IP}:/home/${VM_USER}/
+                    """
+                }
             }
         }
-        
-        stage('🚀 Deploy to K8s') {
+
+        stage('🚀 Deploy Backend to Kubernetes') {
             steps {
-                echo '☸️ Deploying to Kubernetes...'
-                bat """
-                    ssh ${SSH_OPTS} ${VM_USER}@${VM_IP} "kubectl apply -f /home/${VM_USER}/k8s/backend-deployment.yaml"
-                    ssh ${SSH_OPTS} ${VM_USER}@${VM_IP} "kubectl apply -f /home/${VM_USER}/k8s/frontend-deployment.yaml"
-                    ssh ${SSH_OPTS} ${VM_USER}@${VM_IP} "kubectl rollout restart deployment/backend"
-                    ssh ${SSH_OPTS} ${VM_USER}@${VM_IP} "kubectl rollout restart deployment/frontend"
-                """
+                echo 'Deploying backend...'
+                sshagent(['vm-ssh-key']) {
+                    bat """
+                        ssh -o StrictHostKeyChecking=no ${VM_USER}@${VM_IP} "kubectl apply -f /home/${VM_USER}/k8s/backend-deployment.yaml"
+                        ssh -o StrictHostKeyChecking=no ${VM_USER}@${VM_IP} "kubectl rollout restart deployment/backend"
+                    """
+                }
             }
         }
-        
-        stage('✅ Verify') {
+
+        stage('🚀 Deploy Frontend to Kubernetes') {
             steps {
-                echo '🔍 Verifying deployment...'
-                bat """
-                    ssh ${SSH_OPTS} ${VM_USER}@${VM_IP} "kubectl get pods"
-                    ssh ${SSH_OPTS} ${VM_USER}@${VM_IP} "kubectl get svc"
-                """
+                echo 'Deploying frontend...'
+                sshagent(['vm-ssh-key']) {
+                    bat """
+                        ssh -o StrictHostKeyChecking=no ${VM_USER}@${VM_IP} "kubectl apply -f /home/${VM_USER}/k8s/frontend-deployment.yaml"
+                        ssh -o StrictHostKeyChecking=no ${VM_USER}@${VM_IP} "kubectl rollout restart deployment/frontend"
+                    """
+                }
+            }
+        }
+
+        stage('✅ Verify Deployment') {
+            steps {
+                echo 'Verifying Kubernetes resources...'
+                sshagent(['vm-ssh-key']) {
+                    bat """
+                        ssh -o StrictHostKeyChecking=no ${VM_USER}@${VM_IP} "kubectl get pods -o wide"
+                        ssh -o StrictHostKeyChecking=no ${VM_USER}@${VM_IP} "kubectl get svc"
+                    """
+                }
             }
         }
     }
-    
+
     post {
-        always {
-            bat 'docker logout || exit 0'
-        }
         success {
-            echo '🎉 ✅ DEPLOYMENT SUCCESSFUL!'
-            echo '🌐 Access: http://MINIKUBE_IP:30080'
+            echo '🎉 CI/CD PIPELINE COMPLETED SUCCESSFULLY'
         }
         failure {
-            echo '❌ DEPLOYMENT FAILED! Check logs above.'
+            echo '❌ PIPELINE FAILED – CHECK LOGS'
+        }
+        always {
+            bat 'docker logout || exit 0'
         }
     }
 }
