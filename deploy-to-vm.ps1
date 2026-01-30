@@ -1,6 +1,6 @@
 # Deploy to VM script
 $VMUser = "akshu001"
-$VMIP = "172.20.10.2"
+$VMIP = "192.168.0.9"
 
 Write-Host "🚀 Deploying to VM at $VMIP..." -ForegroundColor Green
 

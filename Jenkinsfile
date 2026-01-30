@@ -7,7 +7,7 @@ pipeline {
         BACKEND_IMAGE = "${DOCKERHUB_USERNAME}/backend"
         FRONTEND_IMAGE = "${DOCKERHUB_USERNAME}/frontend"
         VM_USER = 'akshu001'
-        VM_IP = '172.20.10.2'
+        VM_IP = '192.168.0.9'
     }
     
     stages {
